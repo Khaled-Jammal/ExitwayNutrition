@@ -2,7 +2,8 @@ import express from 'express'
 import path from 'node:path'
 import { randomBytes, randomUUID, createHmac, createHash, timingSafeEqual } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
+import { createClient } from '@supabase/supabase-js'
 
 const app = express()
 const port = process.env.PORT || 3001
@@ -23,19 +24,27 @@ async function loadEnvironmentFile() {
 
 await loadEnvironmentFile()
 
-const dataDirectory = path.resolve(process.env.EXITWAY_DATA_DIR || path.join(__dirname, 'data'))
-const uploadDirectory = path.join(dataDirectory, 'uploads')
-const productsFile = path.join(dataDirectory, 'products.json')
-const siteSettingsFile = path.join(dataDirectory, 'site-settings.json')
 const sessionSecret = process.env.SESSION_SECRET || randomBytes(32).toString('hex')
 const adminIdentifier = (process.env.ADMIN_EMAIL || '').trim().toLowerCase()
 const adminPassword = process.env.ADMIN_PASSWORD || ''
 const sessionCookie = 'exitway_session'
 const sessionLifetime = 7 * 24 * 60 * 60
 const maxPhotoBytes = 500000
+const storageBucket = 'product-images'
 const allowedCategories = new Set(['Hairloss', 'Vitamins', 'Supplements', 'Other Products', 'Promotion Products'])
 const collectionImageKeys = new Set(['hair', 'vitamins', 'bodybuilder', 'otherProducts'])
-let storeWrites = Promise.resolve()
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY
+const supabaseApiKey = supabaseSecretKey || process.env.VITE_SUPABASE_ANON_KEY
+
+if (!supabaseUrl || !supabaseApiKey) {
+  throw new Error('Configure SUPABASE_URL and SUPABASE_SECRET_KEY (or VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY) in the server environment.')
+}
+
+const supabase = createClient(supabaseUrl, supabaseApiKey, {
+  auth: { autoRefreshToken: false, persistSession: false },
+})
+const supabaseWritesEnabled = Boolean(supabaseSecretKey)
 
 function getProductPricing(price, category, discountPercent) {
   const percentage = category === 'Promotion Products' ? Number(discountPercent ?? 0) : 0
@@ -59,50 +68,67 @@ if (!process.env.SESSION_SECRET) {
   console.warn('SESSION_SECRET is not configured; sessions will be invalidated when the server restarts.')
 }
 
-const initialProducts = []
+function throwSupabaseError(error, operation) {
+  if (!error) return
+  const failure = new Error(`${operation}: ${error.message}`)
+  failure.cause = error
+  throw failure
+}
 
-async function loadArray(file, fallback) {
-  try {
-    const value = JSON.parse(await readFile(file, 'utf8'))
-    if (!Array.isArray(value)) throw new Error(`${path.basename(file)} must contain a JSON array.`)
-    return value
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error
-    await writeFile(file, `${JSON.stringify(fallback, null, 2)}\n`, 'utf8')
-    return fallback
+function publicImageUrl(imagePath) {
+  if (!imagePath) return null
+  if (/^https?:\/\//i.test(imagePath)) return imagePath
+  return supabase.storage.from(storageBucket).getPublicUrl(imagePath).data.publicUrl
+}
+
+function publicProduct(row) {
+  return {
+    ...row,
+    price: Number(row.price),
+    oldPrice: row.old_price == null ? null : Number(row.old_price),
+    discountPercent: Number(row.discount_percent),
+    rating: Number(row.rating),
+    reviews: Number(row.reviews),
+    image: publicImageUrl(row.image),
   }
 }
 
-async function loadObject(file, fallback) {
+async function getSiteSettingsRow() {
+  const { data, error } = await supabase
+    .from('site_settings')
+    .select('hero_image, collection_images')
+    .eq('id', 'main')
+    .single()
+  throwSupabaseError(error, 'Unable to load site settings')
+  return data
+}
+
+async function uploadImage(decoded, folder) {
+  const imagePath = `${folder}/${randomUUID()}.${decoded.extension}`
+  const contentType = decoded.extension === 'jpg' ? 'image/jpeg' : `image/${decoded.extension}`
+  const { error } = await supabase.storage.from(storageBucket).upload(imagePath, decoded.image, {
+    contentType,
+    cacheControl: '3600',
+    upsert: false,
+  })
+  throwSupabaseError(error, 'Unable to upload image to Supabase Storage')
+  return imagePath
+}
+
+async function removeImage(imagePath) {
+  if (typeof imagePath !== 'string' || !/^(products|site)\/[\da-f-]{36}\.(jpg|png|webp)$/i.test(imagePath)) return
+  const { error } = await supabase.storage.from(storageBucket).remove([imagePath])
+  throwSupabaseError(error, 'Unable to remove image from Supabase Storage')
+}
+
+async function cleanupImage(imagePath, context) {
   try {
-    const value = JSON.parse(await readFile(file, 'utf8'))
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw new Error(`${path.basename(file)} must contain a JSON object.`)
-    }
-    return { ...fallback, ...value }
+    await removeImage(imagePath)
+    return null
   } catch (error) {
-    if (error.code !== 'ENOENT') throw error
-    await writeFile(file, `${JSON.stringify(fallback, null, 2)}\n`, 'utf8')
-    return fallback
+    console.error(context, error)
+    return 'The record was saved, but an unused image could not be removed from Supabase Storage.'
   }
-}
-
-function persistArray(file, value) {
-  storeWrites = storeWrites.catch(() => {}).then(async () => {
-    const temporaryFile = `${file}.${randomUUID()}.tmp`
-    await writeFile(temporaryFile, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-    await rename(temporaryFile, file)
-  })
-  return storeWrites
-}
-
-function persistObject(file, value) {
-  storeWrites = storeWrites.catch(() => {}).then(async () => {
-    const temporaryFile = `${file}.${randomUUID()}.tmp`
-    await writeFile(temporaryFile, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-    await rename(temporaryFile, file)
-  })
-  return storeWrites
 }
 
 function publicUser(user) {
@@ -162,6 +188,13 @@ function requireAdmin(req, res, next) {
   next()
 }
 
+function requireSupabaseWrite(req, res, next) {
+  if (!supabaseWritesEnabled) {
+    return res.status(503).json({ error: 'Supabase is connected in read-only mode. Configure SUPABASE_SECRET_KEY on the server to enable admin changes.' })
+  }
+  next()
+}
+
 function decodePhoto(dataUrl) {
   const match = typeof dataUrl === 'string' && dataUrl.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/)
   if (!match) return { error: 'Upload a JPEG, PNG, or WebP product photo.' }
@@ -182,20 +215,25 @@ function decodePhoto(dataUrl) {
   return { image, extension }
 }
 
-function managedUploadPath(image) {
-  const prefix = '/uploads/'
-  if (typeof image !== 'string' || !image.startsWith(prefix)) return null
-  const filename = image.slice(prefix.length)
-  if (!/^[\da-f-]{36}\.(jpg|png|webp)$/i.test(filename)) return null
-  return path.join(uploadDirectory, filename)
-}
-
 app.use(express.json({ limit: '12mb' }))
 
-app.get('/api/products', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  const [productsResult, settingsResult] = await Promise.all([
+    supabase.from('products').select('id').limit(1),
+    supabase.from('site_settings').select('id').eq('id', 'main').maybeSingle(),
+  ])
+  throwSupabaseError(productsResult.error, 'Supabase products check failed')
+  throwSupabaseError(settingsResult.error, 'Supabase settings check failed')
+  if (!settingsResult.data) throw new Error('Supabase site_settings is missing the required main row.')
+  res.json({ database: 'connected', writesEnabled: supabaseWritesEnabled })
+})
+
+app.get('/api/products', async (req, res) => {
   res.set('Cache-Control', 'no-store')
+  const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false })
+  throwSupabaseError(error, 'Unable to load products from Supabase')
   const { category, search } = req.query
-  let result = products
+  let result = data.map(publicProduct)
   if (category && category !== 'All') result = result.filter((item) => item.category === category)
   if (search) {
     const query = String(search).toLowerCase()
@@ -204,90 +242,71 @@ app.get('/api/products', (req, res) => {
   res.json(result)
 })
 
-app.get('/api/site-settings', (req, res) => {
+app.get('/api/site-settings', async (req, res) => {
   res.set('Cache-Control', 'no-store')
-  res.json({ heroImage: siteSettings.heroImage, collectionImages: siteSettings.collectionImages })
+  const settings = await getSiteSettingsRow()
+  res.json({
+    heroImage: publicImageUrl(settings.hero_image),
+    collectionImages: Object.fromEntries(
+      [...collectionImageKeys].map((key) => [key, publicImageUrl(settings.collection_images?.[key])]),
+    ),
+  })
 })
 
-app.put('/api/admin/site-settings/hero-image', requireAdmin, async (req, res) => {
+app.put('/api/admin/site-settings/hero-image', requireAdmin, requireSupabaseWrite, async (req, res) => {
   const decoded = decodePhoto(req.body?.photo)
   if (decoded.error) return res.status(400).json({ error: decoded.error })
 
-  const imageName = `${randomUUID()}.${decoded.extension}`
-  const imagePath = path.join(uploadDirectory, imageName)
-  await writeFile(imagePath, decoded.image, { flag: 'wx' })
-
-  const previousSettings = siteSettings
-  const updatedSettings = { ...siteSettings, heroImage: `/uploads/${imageName}` }
-  siteSettings = updatedSettings
-  try {
-    await persistObject(siteSettingsFile, updatedSettings)
-  } catch (error) {
-    siteSettings = previousSettings
-    await unlink(imagePath)
-    throw error
+  const settings = await getSiteSettingsRow()
+  const imagePath = await uploadImage(decoded, 'site')
+  const { data, error } = await supabase
+    .from('site_settings')
+    .update({ hero_image: imagePath, updated_at: new Date().toISOString() })
+    .eq('id', 'main')
+    .select('hero_image')
+    .single()
+  if (error) {
+    await cleanupImage(imagePath, 'Could not remove homepage image after a failed settings update:')
+    throwSupabaseError(error, 'Unable to save homepage image settings')
   }
 
-  let warning
-  const oldImagePath = managedUploadPath(previousSettings.heroImage)
-  if (oldImagePath) {
-    try {
-      await unlink(oldImagePath)
-    } catch (error) {
-      if (error.code !== 'ENOENT') {
-        console.error('Updated homepage photo, but could not remove the previous photo:', error)
-        warning = 'Homepage photo updated, but the previous photo could not be removed.'
-      }
-    }
-  }
-  res.json({ heroImage: updatedSettings.heroImage, warning })
+  const warning = await cleanupImage(settings.hero_image, 'Could not remove the previous homepage image:')
+  res.json({ heroImage: publicImageUrl(data.hero_image), warning })
 })
 
-app.put('/api/admin/site-settings/collection-images/:key', requireAdmin, async (req, res) => {
+app.put('/api/admin/site-settings/collection-images/:key', requireAdmin, requireSupabaseWrite, async (req, res) => {
   const { key } = req.params
   if (!collectionImageKeys.has(key)) return res.status(400).json({ error: 'Choose a valid home page collection.' })
 
   const decoded = decodePhoto(req.body?.photo)
   if (decoded.error) return res.status(400).json({ error: decoded.error })
 
-  const imageName = `${randomUUID()}.${decoded.extension}`
-  const imagePath = path.join(uploadDirectory, imageName)
-  await writeFile(imagePath, decoded.image, { flag: 'wx' })
-
-  const previousSettings = siteSettings
-  const previousImage = siteSettings.collectionImages[key]
-  const updatedImage = `/uploads/${imageName}`
-  const updatedSettings = {
-    ...siteSettings,
-    collectionImages: { ...siteSettings.collectionImages, [key]: updatedImage },
-  }
-  siteSettings = updatedSettings
-  try {
-    await persistObject(siteSettingsFile, updatedSettings)
-  } catch (error) {
-    siteSettings = previousSettings
-    await unlink(imagePath)
-    throw error
+  const settings = await getSiteSettingsRow()
+  const imagePath = await uploadImage(decoded, 'site')
+  const previousImage = settings.collection_images?.[key]
+  const collectionImages = { ...settings.collection_images, [key]: imagePath }
+  const { data, error } = await supabase
+    .from('site_settings')
+    .update({ collection_images: collectionImages, updated_at: new Date().toISOString() })
+    .eq('id', 'main')
+    .select('collection_images')
+    .single()
+  if (error) {
+    await cleanupImage(imagePath, 'Could not remove collection image after a failed settings update:')
+    throwSupabaseError(error, 'Unable to save collection image settings')
   }
 
-  let warning
-  const oldImagePath = managedUploadPath(previousImage)
-  if (oldImagePath) {
-    try {
-      await unlink(oldImagePath)
-    } catch (error) {
-      if (error.code !== 'ENOENT') {
-        console.error('Updated collection photo, but could not remove the previous photo:', error)
-        warning = 'Collection photo updated, but the previous photo could not be removed.'
-      }
-    }
-  }
-  res.json({ key, image: updatedImage, warning })
+  const warning = await cleanupImage(previousImage, 'Could not remove the previous collection image:')
+  res.json({ key, image: publicImageUrl(data.collection_images[key]), warning })
 })
 
 app.get('/api/auth/me', (req, res) => {
   const user = readSession(req)
-  res.json({ user, adminConfigured: Boolean(adminIdentifier && adminPassword) })
+  res.json({
+    user,
+    adminConfigured: Boolean(adminIdentifier && adminPassword),
+    supabaseWritesEnabled,
+  })
 })
 
 app.post('/api/auth/register', (req, res) => {
@@ -313,7 +332,7 @@ app.post('/api/auth/logout', (req, res) => {
   res.status(204).end()
 })
 
-app.post('/api/admin/products', requireAdmin, async (req, res) => {
+app.post('/api/admin/products', requireAdmin, requireSupabaseWrite, async (req, res) => {
   const { name, description, photo, amount, unit, price, category, discountPercent } = req.body
   const parsedAmount = Number(amount)
   const parsedPrice = Number(price)
@@ -337,43 +356,40 @@ app.post('/api/admin/products', requireAdmin, async (req, res) => {
   const decoded = decodePhoto(photo)
   if (decoded.error) return res.status(400).json({ error: decoded.error })
 
-  const imageName = `${randomUUID()}.${decoded.extension}`
-  const imagePath = path.join(uploadDirectory, imageName)
-  await writeFile(imagePath, decoded.image, { flag: 'wx' })
-  const product = {
-    id: randomUUID(),
+  const imagePath = await uploadImage(decoded, 'products')
+  const productRow = {
     name: name.trim(),
     description: description.trim(),
     category,
     amount: `${parsedAmount} ${unit}`,
     format: `${parsedAmount} ${unit}`,
     price: pricing.price,
-    oldPrice: pricing.oldPrice,
-    discountPercent: pricing.discountPercent,
+    old_price: pricing.oldPrice,
+    discount_percent: pricing.discountPercent,
     rating: 0,
     reviews: 0,
     badge: null,
     flavor: '',
-    image: `/uploads/${imageName}`,
+    image: imagePath,
   }
 
-  products.push(product)
-  try {
-    await persistArray(productsFile, products)
-  } catch (error) {
-    products = products.filter((entry) => entry.id !== product.id)
-    await unlink(imagePath)
-    throw error
+  const { data, error } = await supabase.from('products').insert(productRow).select('*').single()
+  if (error) {
+    await cleanupImage(imagePath, 'Could not remove product image after a failed product insert:')
+    throwSupabaseError(error, 'Unable to save product to Supabase')
   }
-
-  res.status(201).json({ product })
+  res.status(201).json({ product: publicProduct(data) })
 })
 
-app.put('/api/admin/products/:id', requireAdmin, async (req, res) => {
-  const productIndex = products.findIndex((item) => String(item.id) === req.params.id)
-  if (productIndex === -1) return res.status(404).json({ error: 'Product not found.' })
+app.put('/api/admin/products/:id', requireAdmin, requireSupabaseWrite, async (req, res) => {
+  const { data: current, error: loadError } = await supabase
+    .from('products')
+    .select('*')
+    .eq('id', req.params.id)
+    .maybeSingle()
+  throwSupabaseError(loadError, 'Unable to load product from Supabase')
+  if (!current) return res.status(404).json({ error: 'Product not found.' })
 
-  const current = products[productIndex]
   const { name, description, photo, amount, unit, price, category, discountPercent } = req.body
   const parsedPrice = Number(price)
   const parsedAmount = amount === undefined || amount === '' ? null : Number(amount)
@@ -395,79 +411,53 @@ app.put('/api/admin/products/:id', requireAdmin, async (req, res) => {
   const pricing = getProductPricing(parsedPrice, nextCategory, discountPercent)
   if (!pricing) return res.status(400).json({ error: 'Enter a discount percentage from 0 to 100.' })
 
-  let newImagePath = null
-  let nextImage = current.image
+  let newImagePath
   if (photo !== undefined && photo !== '') {
     const decoded = decodePhoto(photo)
     if (decoded.error) return res.status(400).json({ error: decoded.error })
-    const imageName = `${randomUUID()}.${decoded.extension}`
-    newImagePath = path.join(uploadDirectory, imageName)
-    await writeFile(newImagePath, decoded.image, { flag: 'wx' })
-    nextImage = `/uploads/${imageName}`
+    newImagePath = await uploadImage(decoded, 'products')
   }
 
-  const updatedProduct = {
-    ...current,
+  const productUpdate = {
     name: name.trim(),
     description: description.trim(),
     category: nextCategory,
     amount: parsedAmount === null ? current.amount : `${parsedAmount} ${unit}`,
     format: parsedAmount === null ? current.format : `${parsedAmount} ${unit}`,
     price: pricing.price,
-    oldPrice: pricing.oldPrice,
-    discountPercent: pricing.discountPercent,
-    image: nextImage,
+    old_price: pricing.oldPrice,
+    discount_percent: pricing.discountPercent,
+    image: newImagePath || current.image,
+    updated_at: new Date().toISOString(),
   }
-  products[productIndex] = updatedProduct
-  try {
-    await persistArray(productsFile, products)
-  } catch (error) {
-    products[productIndex] = current
-    if (newImagePath) await unlink(newImagePath)
-    throw error
+  const { data, error } = await supabase
+    .from('products')
+    .update(productUpdate)
+    .eq('id', req.params.id)
+    .select('*')
+    .single()
+  if (error) {
+    if (newImagePath) await cleanupImage(newImagePath, 'Could not remove new product image after a failed update:')
+    throwSupabaseError(error, 'Unable to update product in Supabase')
   }
 
-  let warning
-  if (newImagePath) {
-    const oldImagePath = managedUploadPath(current.image)
-    if (oldImagePath) {
-      try {
-        await unlink(oldImagePath)
-      } catch (error) {
-        if (error.code !== 'ENOENT') {
-          console.error('Updated product, but could not remove its previous photo:', error)
-          warning = 'Product updated, but its previous photo could not be removed.'
-        }
-      }
-    }
-  }
-  res.json({ product: updatedProduct, warning })
+  const warning = newImagePath
+    ? await cleanupImage(current.image, 'Could not remove the previous product image:')
+    : null
+  res.json({ product: publicProduct(data), warning })
 })
 
-app.delete('/api/admin/products/:id', requireAdmin, async (req, res) => {
-  const productIndex = products.findIndex((item) => String(item.id) === req.params.id)
-  if (productIndex === -1) return res.status(404).json({ error: 'Product not found.' })
+app.delete('/api/admin/products/:id', requireAdmin, requireSupabaseWrite, async (req, res) => {
+  const { data, error } = await supabase
+    .from('products')
+    .delete()
+    .eq('id', req.params.id)
+    .select('id, image')
+    .maybeSingle()
+  throwSupabaseError(error, 'Unable to delete product from Supabase')
+  if (!data) return res.status(404).json({ error: 'Product not found.' })
 
-  const [deletedProduct] = products.splice(productIndex, 1)
-  try {
-    await persistArray(productsFile, products)
-  } catch (error) {
-    products.splice(productIndex, 0, deletedProduct)
-    throw error
-  }
-
-  let warning
-  const imagePath = managedUploadPath(deletedProduct.image)
-  if (imagePath) {
-    try {
-      await unlink(imagePath)
-    } catch (error) {
-      if (error.code !== 'ENOENT') {
-        console.error('Deleted product, but could not remove its photo:', error)
-        warning = 'Product deleted, but its uploaded photo could not be removed.'
-      }
-    }
-  }
+  const warning = await cleanupImage(data.image, 'Product deleted, but its image could not be removed:')
   res.json({ deletedId: req.params.id, warning })
 })
 
@@ -490,7 +480,6 @@ app.post('/api/newsletter', (req, res) => {
   res.status(201).json({ message: 'Welcome to ExitWay' })
 })
 
-app.use('/uploads', express.static(uploadDirectory, { index: false }))
 app.use(express.static(path.join(__dirname, 'dist')))
 app.get('/{*path}', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'))
@@ -503,21 +492,24 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: 'The server could not complete the request.' })
 })
 
-await mkdir(uploadDirectory, { recursive: true })
-let products = await loadArray(productsFile, initialProducts)
-const loadedSiteSettings = await loadObject(siteSettingsFile, { heroImage: null, collectionImages: {} })
-const loadedCollectionImages = loadedSiteSettings.collectionImages && typeof loadedSiteSettings.collectionImages === 'object' && !Array.isArray(loadedSiteSettings.collectionImages)
-  ? loadedSiteSettings.collectionImages
-  : {}
-let siteSettings = {
-  ...loadedSiteSettings,
-  collectionImages: {
-    hair: null,
-    vitamins: null,
-    bodybuilder: null,
-    otherProducts: null,
-    ...loadedCollectionImages,
-  },
+async function verifySupabaseConnection() {
+  const [productsResult, settingsResult] = await Promise.all([
+    supabase.from('products').select('id').limit(1),
+    supabase.from('site_settings').select('id').eq('id', 'main').maybeSingle(),
+  ])
+  throwSupabaseError(productsResult.error, 'Supabase connection check failed for public.products')
+  throwSupabaseError(settingsResult.error, 'Supabase connection check failed for public.site_settings')
+  if (!settingsResult.data) {
+    throw new Error('Supabase public.site_settings is missing the required main row. Run supabase/setup.sql.')
+  }
+  if (supabaseWritesEnabled) {
+    const { error } = await supabase.storage.getBucket(storageBucket)
+    if (error) {
+      throw new Error(`Supabase Storage bucket "${storageBucket}" is unavailable. Run supabase/setup.sql. ${error.message}`)
+    }
+  }
 }
 
-app.listen(port, () => console.log(`ExitWay API running at http://localhost:${port}`))
+await verifySupabaseConnection()
+
+app.listen(port, () => console.log(`ExitWay API running at http://localhost:${port} (Supabase connected${supabaseWritesEnabled ? '' : ', read-only'})`))

@@ -164,6 +164,9 @@ footer small { grid-column:1/2; color:#91a49b; font-size:10px; }
 .form-note, .form-error, .password-hint { margin:0; font-size:12px; line-height:1.5; }
 .form-note { color:#7c6350; }
 .form-error { color:#a91d24; }
+.connection-status { max-width:1240px; margin:16px auto; padding:10px 16px; border:1px solid #e5c7a6; border-radius:8px; background:#fff8ee; color:#7c5030; font-size:13px; line-height:1.5; }
+.connection-status.error { border-color:#e8b8ba; background:#fff4f4; color:#a91d24; }
+.connection-status.warning { border-color:#e5c7a6; background:#fff8ee; color:#7c5030; }
 .password-hint { margin-top:-12px; color:#79817c; }
 
 .admin-dashboard { max-width:1240px; min-height:65vh; margin:0 auto; padding:64px 30px 90px; }

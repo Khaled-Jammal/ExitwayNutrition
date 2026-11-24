@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
-import { fallbackProducts } from './data/products'
 import { searchProducts } from './data/productSearch'
 import { defaultCollectionImages } from './data/collectionImages'
+import { readApiResponse } from './data/readApiResponse'
 import brandLogo from './assets/exitway name logo.jpeg'
 import Home, { Icon } from './pages/Home'
 import CategoryPage from './pages/CategoryPage'
@@ -25,8 +25,11 @@ function HeaderIcon({ name, size = 18 }) {
 }
 
 function App() {
-  const [products, setProducts] = useState(fallbackProducts)
+  const [products, setProducts] = useState([])
   const [collectionImages, setCollectionImages] = useState(defaultCollectionImages)
+  const [dataError, setDataError] = useState('')
+  const [supabaseStatus, setSupabaseStatus] = useState('checking')
+  const [supabaseWritesEnabled, setSupabaseWritesEnabled] = useState(false)
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const [adminConfigured, setAdminConfigured] = useState(false)
@@ -67,42 +70,33 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
-    fetch('/api/products', { cache: 'no-store' })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Product request failed: ${response.status}`)
-        return response.json()
-      })
-      .then((result) => {
-        if (!Array.isArray(result)) throw new Error('Product response must be an array')
-        if (!cancelled) setProducts(result)
-      })
-      .catch((error) => {
-        console.error('Unable to load products; using the local catalog instead.', error)
-        if (!cancelled) setProducts(fallbackProducts)
-      })
-    return () => { cancelled = true }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/site-settings', { cache: 'no-store' })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Site settings request failed: ${response.status}`)
-        return response.json()
-      })
-      .then((result) => {
+    Promise.all([
+      fetch('/api/products', { cache: 'no-store' }).then(readApiResponse),
+      fetch('/api/site-settings', { cache: 'no-store' }).then(readApiResponse),
+      fetch('/api/health', { cache: 'no-store' }).then(readApiResponse),
+    ])
+      .then(([productResult, settingsResult, healthResult]) => {
+        if (!Array.isArray(productResult)) throw new Error('Supabase returned an invalid products response.')
+        if (healthResult.database !== 'connected') throw new Error('The Supabase database connection was not confirmed.')
         if (cancelled) return
-        if (result.collectionImages && typeof result.collectionImages === 'object') {
+        setProducts(productResult)
+        if (settingsResult.collectionImages && typeof settingsResult.collectionImages === 'object') {
           setCollectionImages((current) => ({
-            hair: result.collectionImages.hair || current.hair,
-            vitamins: result.collectionImages.vitamins || current.vitamins,
-            bodybuilder: result.collectionImages.bodybuilder || current.bodybuilder,
-            otherProducts: result.collectionImages.otherProducts || current.otherProducts,
+            hair: settingsResult.collectionImages.hair || current.hair,
+            vitamins: settingsResult.collectionImages.vitamins || current.vitamins,
+            bodybuilder: settingsResult.collectionImages.bodybuilder || current.bodybuilder,
+            otherProducts: settingsResult.collectionImages.otherProducts || current.otherProducts,
           }))
         }
+        setSupabaseWritesEnabled(Boolean(healthResult.writesEnabled))
+        setSupabaseStatus('connected')
       })
       .catch((error) => {
-        console.error('Unable to load site settings; using the default collection photos.', error)
+        console.error('Unable to load data from Supabase.', error)
+        if (!cancelled) {
+          setDataError(error.message || 'Unable to load data from Supabase.')
+          setSupabaseStatus('error')
+        }
       })
     return () => { cancelled = true }
   }, [])
@@ -118,6 +112,7 @@ function App() {
         if (cancelled) return
         setUser(result.user)
         setAdminConfigured(Boolean(result.adminConfigured))
+        setSupabaseWritesEnabled(Boolean(result.supabaseWritesEnabled))
       })
       .catch((error) => {
         console.error('Unable to check the current account.', error)
@@ -190,6 +185,7 @@ function App() {
         ? <AdminDashboard
             products={products}
             collectionImages={collectionImages}
+            supabaseWritesEnabled={supabaseWritesEnabled}
             onCollectionImageUpdated={(key, image) => setCollectionImages((current) => ({ ...current, [key]: image }))}
             onProductCreated={pageProps.onProductCreated}
             onProductUpdated={(updated) => setProducts((current) => current.map((product) => String(product.id) === String(updated.id) ? updated : product))}
@@ -283,7 +279,14 @@ function App() {
         </div>
       </header>
 
-      <main>{activePage}</main>
+      <main>
+        {supabaseStatus === 'checking' && <p className="connection-status" role="status">Checking Supabase connection...</p>}
+        {supabaseStatus === 'error' && <p className="connection-status error" role="alert">Supabase data is unavailable: {dataError}</p>}
+        {supabaseStatus === 'connected' && !supabaseWritesEnabled && user?.role === 'admin' && (
+          <p className="connection-status warning" role="status">Supabase is connected in read-only mode. Configure the server-side secret key to enable admin edits and image uploads.</p>
+        )}
+        {activePage}
+      </main>
 
       <footer>
         <div className="footer-main">

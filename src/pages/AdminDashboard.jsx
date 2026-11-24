@@ -22,7 +22,7 @@ function ProductActionIcon({ type }) {
     : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg>
 }
 
-export default function AdminDashboard({ products, collectionImages, onCollectionImageUpdated, onProductCreated, onProductUpdated, onProductDeleted, onLogout }) {
+export default function AdminDashboard({ products, collectionImages, supabaseWritesEnabled, onCollectionImageUpdated, onProductCreated, onProductUpdated, onProductDeleted, onLogout }) {
   const [activeForm, setActiveForm] = useState(null)
   const [logoutError, setLogoutError] = useState('')
   const [productError, setProductError] = useState('')
@@ -69,6 +69,7 @@ export default function AdminDashboard({ products, collectionImages, onCollectio
       </div>
       {logoutError && <p className="form-error" role="alert">{logoutError}</p>}
       {productError && <p className="form-error" role="alert">{productError}</p>}
+      {!supabaseWritesEnabled && <p className="form-error" role="alert">Supabase is read-only. Add the server-side SUPABASE_SECRET_KEY to enable product and image changes.</p>}
       <div className="admin-summary">
         <article><span>Total products</span><strong>{products.length}</strong></article>
         <article><span>Product sections</span><strong>{sections.length}</strong></article>
