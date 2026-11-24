@@ -480,10 +480,12 @@ app.post('/api/newsletter', (req, res) => {
   res.status(201).json({ message: 'Welcome to ExitWay' })
 })
 
-app.use(express.static(path.join(__dirname, 'dist')))
-app.get('/{*path}', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'))
-})
+if (!process.env.VERCEL) {
+  app.use(express.static(path.join(__dirname, 'dist')))
+  app.get('/{*path}', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'))
+  })
+}
 
 app.use((error, req, res, next) => {
   if (res.headersSent) return next(error)
@@ -510,6 +512,9 @@ async function verifySupabaseConnection() {
   }
 }
 
-await verifySupabaseConnection()
+if (!process.env.VERCEL) {
+  await verifySupabaseConnection()
+  app.listen(port, () => console.log(`ExitWay API running at http://localhost:${port} (Supabase connected${supabaseWritesEnabled ? '' : ', read-only'})`))
+}
 
-app.listen(port, () => console.log(`ExitWay API running at http://localhost:${port} (Supabase connected${supabaseWritesEnabled ? '' : ', read-only'})`))
+export default app
