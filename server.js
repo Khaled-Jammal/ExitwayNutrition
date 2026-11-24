@@ -35,10 +35,13 @@ const allowedCategories = new Set(['Hairloss', 'Vitamins', 'Supplements', 'Other
 const collectionImageKeys = new Set(['hair', 'vitamins', 'bodybuilder', 'otherProducts'])
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
 const supabaseSecretKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY
-const supabaseApiKey = supabaseSecretKey || process.env.VITE_SUPABASE_ANON_KEY
+const supabaseApiKey = supabaseSecretKey
+  || process.env.SUPABASE_PUBLISHABLE_KEY
+  || process.env.SUPABASE_ANON_KEY
+  || process.env.VITE_SUPABASE_ANON_KEY
 
 if (!supabaseUrl || !supabaseApiKey) {
-  throw new Error('Configure SUPABASE_URL and SUPABASE_SECRET_KEY (or VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY) in the server environment.')
+  throw new Error('Configure SUPABASE_URL and SUPABASE_SECRET_KEY (or SUPABASE_PUBLISHABLE_KEY for read-only access) in the server environment.')
 }
 
 const supabase = createClient(supabaseUrl, supabaseApiKey, {
@@ -62,6 +65,10 @@ function getProductPricing(price, category, discountPercent) {
 
 if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
   throw new Error('SESSION_SECRET must be configured in production.')
+}
+
+if (process.env.NODE_ENV === 'production' && (!adminIdentifier || !adminPassword)) {
+  throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD must be configured in production.')
 }
 
 if (!process.env.SESSION_SECRET) {
