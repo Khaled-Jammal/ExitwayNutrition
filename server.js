@@ -24,9 +24,11 @@ async function loadEnvironmentFile() {
 
 await loadEnvironmentFile()
 
+const sessionSecretConfigured = Boolean(process.env.SESSION_SECRET)
 const sessionSecret = process.env.SESSION_SECRET || randomBytes(32).toString('hex')
 const adminIdentifier = (process.env.ADMIN_EMAIL || '').trim().toLowerCase()
 const adminPassword = process.env.ADMIN_PASSWORD || ''
+const adminAuthConfigured = Boolean(sessionSecretConfigured && adminIdentifier && adminPassword)
 const sessionCookie = 'exitway_session'
 const sessionLifetime = 7 * 24 * 60 * 60
 const maxPhotoBytes = 500000
@@ -63,16 +65,8 @@ function getProductPricing(price, category, discountPercent) {
   }
 }
 
-if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
-  throw new Error('SESSION_SECRET must be configured in production.')
-}
-
-if (process.env.NODE_ENV === 'production' && (!adminIdentifier || !adminPassword)) {
-  throw new Error('ADMIN_EMAIL and ADMIN_PASSWORD must be configured in production.')
-}
-
-if (!process.env.SESSION_SECRET) {
-  console.warn('SESSION_SECRET is not configured; sessions will be invalidated when the server restarts.')
+if (!adminAuthConfigured) {
+  console.warn('Admin sign-in is disabled; configure SESSION_SECRET, ADMIN_EMAIL, and ADMIN_PASSWORD.')
 }
 
 function throwSupabaseError(error, operation) {
@@ -160,6 +154,7 @@ function signSession(user) {
 }
 
 function readSession(req) {
+  if (!adminAuthConfigured) return null
   const cookie = (req.headers.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith(`${sessionCookie}=`))
   if (!cookie) return null
 
@@ -311,7 +306,7 @@ app.get('/api/auth/me', (req, res) => {
   const user = readSession(req)
   res.json({
     user,
-    adminConfigured: Boolean(adminIdentifier && adminPassword),
+    adminConfigured: adminAuthConfigured,
     supabaseWritesEnabled,
   })
 })
@@ -323,7 +318,7 @@ app.post('/api/auth/register', (req, res) => {
 app.post('/api/auth/login', (req, res) => {
   const identifier = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : ''
   const password = typeof req.body.password === 'string' ? req.body.password : ''
-  if (!adminIdentifier || !adminPassword) return res.status(503).json({ error: 'Admin credentials have not been configured on the server.' })
+  if (!adminAuthConfigured) return res.status(503).json({ error: 'Admin sign-in requires SESSION_SECRET, ADMIN_EMAIL, and ADMIN_PASSWORD to be configured on the server.' })
   if (!identifier || !password || password.length > 128) return res.status(400).json({ error: 'Enter the admin username and password.' })
   if (identifier !== adminIdentifier || !safeEqual(password, adminPassword)) {
     return res.status(401).json({ error: 'Admin username or password is incorrect.' })
