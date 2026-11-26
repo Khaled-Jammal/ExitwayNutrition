@@ -7,10 +7,10 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --green: #a91d24;
+  --green: #2563eb;
   --cream: #fbfaf7;
-  --lime: #eeeae1;
-  --orange: #a91d24;
+  --lime: #eaf2ff;
+  --orange: #2563eb;
 }
 
 * { box-sizing: border-box; }
