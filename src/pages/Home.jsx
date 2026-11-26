@@ -1,8 +1,6 @@
-import { useState } from 'react'
 import { defaultCollectionImages } from '../data/collectionImages'
 import { whatsappLink } from '../data/whatsapp'
 import { matchesProductCategory } from '../data/productSearch'
-import ProductForm from './ProductForm'
 
 export function Icon({ name, size = 20 }) {
   const paths = {
@@ -14,9 +12,7 @@ export function Icon({ name, size = 20 }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
 }
 
-export default function Home({ products = [], isAdmin, onProductCreated, collectionImages = defaultCollectionImages }) {
-  const [addingPromotion, setAddingPromotion] = useState(false)
-  const [addingSections, setAddingSections] = useState({})
+export default function Home({ products = [], collectionImages = defaultCollectionImages }) {
   const promotionProducts = products.filter((product) => matchesProductCategory(product, 'Promotion Products'))
   const sections = [
     { id: 'hairloss', category: 'Hairloss', eyebrow: 'Hair + scalp support', title: 'Hairloss Solutions' },
@@ -31,14 +27,11 @@ export default function Home({ products = [], isAdmin, onProductCreated, collect
 
   return (
     <>
-      {(isAdmin || promotionProducts.length > 0) && (
+      {promotionProducts.length > 0 && (
         <section id="sales-product" className="shop-section promotion-section" aria-label="Sales Product">
           <div className="section-heading">
             <div><h2>Sales Product</h2></div>
-            {isAdmin && <button className="admin-add-button" onClick={() => setAddingPromotion(!addingPromotion)}>{addingPromotion ? 'Close form' : '+ Add sales product'}</button>}
           </div>
-          {addingPromotion && <ProductForm category="Promotion Products" onSaved={(product) => { onProductCreated(product); setAddingPromotion(false) }} onCancel={() => setAddingPromotion(false)} />}
-          {isAdmin && promotionProducts.length === 0 && !addingPromotion && <p className="empty-product-state">Add sales products here to feature them on the home page.</p>}
           <div className="product-grid">
             {promotionProducts.map((product) => (
               <article className="product-card" key={product.id}>
@@ -71,15 +64,12 @@ export default function Home({ products = [], isAdmin, onProductCreated, collect
       </section>
       {sections.map((section) => {
         const sectionProducts = products.filter((product) => matchesProductCategory(product, section.category))
-        const isAdding = addingSections[section.id]
         return (
           <section id={section.id} className="shop-section home-category-section" aria-label={section.title} key={section.id}>
             <div className="section-heading">
               <div><p className="eyebrow">{section.eyebrow}</p><h2>{section.title}</h2></div>
-              {isAdmin && <button className="admin-add-button" onClick={() => setAddingSections((current) => ({ ...current, [section.id]: !current[section.id] }))}>{isAdding ? 'Close form' : '+ Add product'}</button>}
             </div>
-            {isAdding && <ProductForm category={section.category} onSaved={(product) => { onProductCreated(product); setAddingSections((current) => ({ ...current, [section.id]: false })) }} onCancel={() => setAddingSections((current) => ({ ...current, [section.id]: false }))} />}
-            {sectionProducts.length === 0 && !isAdding && <p className="empty-product-state">No products available in this section yet.</p>}
+            {sectionProducts.length === 0 && <p className="empty-product-state">No products available in this section yet.</p>}
             <div className="product-grid">
               {sectionProducts.map((product) => (
                 <article className="product-card" key={product.id}>

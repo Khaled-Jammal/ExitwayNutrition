@@ -10,8 +10,6 @@ import Hairloss from './pages/Hairloss'
 import Vitamins from './pages/Vitamins'
 import Supplement from './pages/Supplement'
 import OtherProducts from './pages/OtherProducts'
-import AccountPage from './pages/AccountPage'
-import AdminDashboard from './pages/AdminDashboard'
 
 function HeaderIcon({ name, size = 18 }) {
   const paths = {
@@ -19,7 +17,6 @@ function HeaderIcon({ name, size = 18 }) {
     hair: <><path d="M7 18c-2-3-1-7 2-9 2-1 2-4 5-5 1 3 5 4 5 8 0 4-3 7-7 7"/><path d="M8 18c2-1 3-3 3-6"/><path d="M15 8c-1 3-1 6 1 9"/></>,
     pills: <><rect x="3" y="8" width="18" height="8" rx="4" transform="rotate(-35 12 12)"/><path d="M8 10.5l8 5.5"/></>,
     gym: <><path d="M2 12h20"/><path d="M5 9v6M19 9v6"/><path d="M2 10v4M22 10v4"/></>,
-    account: <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>,
   }
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>
 }
@@ -29,19 +26,24 @@ function App() {
   const [collectionImages, setCollectionImages] = useState(defaultCollectionImages)
   const [dataError, setDataError] = useState('')
   const [supabaseStatus, setSupabaseStatus] = useState('checking')
-  const [supabaseWritesEnabled, setSupabaseWritesEnabled] = useState(false)
-  const [user, setUser] = useState(null)
-  const [authReady, setAuthReady] = useState(false)
-  const [adminConfigured, setAdminConfigured] = useState(false)
-  const [localAdminBypass, setLocalAdminBypass] = useState(false)
   const [search, setSearch] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
   const [pendingSearchProductId, setPendingSearchProductId] = useState(null)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [page, setPage] = useState(() => window.location.hash.slice(1) || 'home')
+  const [page, setPage] = useState(() => {
+    const requestedPage = window.location.hash.slice(1)
+    return ['search', 'hairloss', 'vitamins', 'supplement', 'other-products'].includes(requestedPage)
+      ? requestedPage
+      : 'home'
+  })
 
   useEffect(() => {
-    const handleHash = () => setPage(window.location.hash.slice(1) || 'home')
+    const handleHash = () => {
+      const requestedPage = window.location.hash.slice(1)
+      setPage(['search', 'hairloss', 'vitamins', 'supplement', 'other-products'].includes(requestedPage)
+        ? requestedPage
+        : 'home')
+    }
     window.addEventListener('hashchange', handleHash)
     return () => window.removeEventListener('hashchange', handleHash)
   }, [])
@@ -89,7 +91,6 @@ function App() {
             otherProducts: settingsResult.collectionImages.otherProducts || current.otherProducts,
           }))
         }
-        setSupabaseWritesEnabled(Boolean(healthResult.writesEnabled))
         setSupabaseStatus('connected')
       })
       .catch((error) => {
@@ -98,29 +99,6 @@ function App() {
           setDataError(error.message || 'Unable to load data from Supabase.')
           setSupabaseStatus('error')
         }
-      })
-    return () => { cancelled = true }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-    fetch('/api/auth/me')
-      .then((response) => {
-        if (!response.ok) throw new Error(`Account request failed: ${response.status}`)
-        return response.json()
-      })
-      .then((result) => {
-        if (cancelled) return
-        setUser(result.user)
-        setAdminConfigured(Boolean(result.adminConfigured))
-        setLocalAdminBypass(Boolean(result.localAdminBypass))
-        setSupabaseWritesEnabled(Boolean(result.supabaseWritesEnabled))
-      })
-      .catch((error) => {
-        console.error('Unable to check the current account.', error)
-      })
-      .finally(() => {
-        if (!cancelled) setAuthReady(true)
       })
     return () => { cancelled = true }
   }, [])
@@ -170,8 +148,6 @@ function App() {
     products: searchResult.products,
     search,
     recommended: searchResult.recommended,
-    isAdmin: user?.role === 'admin',
-    onProductCreated: (product) => setProducts((current) => [product, ...current]),
   }
   let activePage
   if (page === 'search') activePage = <CategoryPage {...pageProps} title="Search results" eyebrow="Product search" category="All"/>
@@ -179,37 +155,7 @@ function App() {
   else if (page === 'vitamins') activePage = <Vitamins {...pageProps}/>
   else if (page === 'supplement') activePage = <Supplement {...pageProps}/>
   else if (page === 'other-products') activePage = <OtherProducts {...pageProps}/>
-  else if (page === 'account') activePage = <AccountPage user={user} adminConfigured={adminConfigured} localAdminBypass={localAdminBypass} onAuth={handleAuth} onLogout={handleLogout} onNavigate={navigate}/>
-  else if (page === 'admin') {
-    activePage = !authReady
-      ? <section className="account-page"><p>Checking admin access...</p></section>
-      : user?.role === 'admin'
-        ? <AdminDashboard
-            products={products}
-            collectionImages={collectionImages}
-            localAdminBypass={localAdminBypass}
-            supabaseWritesEnabled={supabaseWritesEnabled}
-            onCollectionImageUpdated={(key, image) => setCollectionImages((current) => ({ ...current, [key]: image }))}
-            onProductCreated={pageProps.onProductCreated}
-            onProductUpdated={(updated) => setProducts((current) => current.map((product) => String(product.id) === String(updated.id) ? updated : product))}
-            onProductDeleted={(id) => setProducts((current) => current.filter((product) => String(product.id) !== String(id)))}
-            onLogout={handleLogout}
-          />
-        : <AccountPage user={user} adminConfigured={adminConfigured} localAdminBypass={localAdminBypass} onAuth={handleAuth} onLogout={handleLogout} onNavigate={navigate}/>
-  }
-  else activePage = <Home products={products} isAdmin={user?.role === 'admin'} onProductCreated={pageProps.onProductCreated} collectionImages={collectionImages}/>
-
-  function handleAuth(nextUser) {
-    setUser(nextUser)
-    navigate(nextUser.role === 'admin' ? 'admin' : 'home')
-  }
-
-  async function handleLogout() {
-    const response = await fetch('/api/auth/logout', { method: 'POST' })
-    if (!response.ok) throw new Error('Unable to sign out. Please try again.')
-    setUser(null)
-    navigate('home')
-  }
+  else activePage = <Home products={products} collectionImages={collectionImages}/>
 
   function chooseSuggestion(product) {
     setSearch(product.name)
@@ -271,23 +217,12 @@ function App() {
               </div>
             )}
           </form>
-          <button
-            className={`admin-login-icon${page === 'account' || page === 'admin' ? ' active' : ''}`}
-            onClick={() => navigate(user?.role === 'admin' ? 'admin' : 'account')}
-            aria-label={user?.role === 'admin' ? 'Admin dashboard' : 'Admin login'}
-            title={user?.role === 'admin' ? 'Admin dashboard' : 'Admin login'}
-          >
-            <HeaderIcon name="account" size={17}/>
-          </button>
         </div>
       </header>
 
       <main>
         {supabaseStatus === 'checking' && <p className="connection-status" role="status">Checking Supabase connection...</p>}
         {supabaseStatus === 'error' && <p className="connection-status error" role="alert">Supabase data is unavailable: {dataError}</p>}
-        {supabaseStatus === 'connected' && !supabaseWritesEnabled && user?.role === 'admin' && (
-          <p className="connection-status warning" role="status">The store is available, but admin edits and image uploads are disabled. Add SUPABASE_SECRET_KEY in Vercel project settings under Environment Variables, then redeploy. Keep this key server-only; do not use a VITE_ variable.</p>
-        )}
         {activePage}
       </main>
 
@@ -302,11 +237,9 @@ function App() {
           <button onClick={() => navigateToHomeSection('vitamins')}>Vitamins</button>
           <button onClick={() => navigateToHomeSection('supplement')}>Supplement</button>
           <button onClick={() => navigateToHomeSection('other-products')}>Other products</button>
-          <button onClick={() => navigate(user?.role === 'admin' ? 'admin' : 'account')}>{user?.role === 'admin' ? 'Admin dashboard' : 'Admin login'}</button>
         </nav>
         <div className="footer-contact">
           <a href="tel:+96181712946">+961 81 712 946</a>
-          <a href="mailto:mimo@gmail.com">mimo@gmail.com</a>
         </div>
         <small>© 2026 ExitWay Nutrition</small>
         <p className="footer-credit">This website created by Khaled Jammal. <a href="tel:+96170975519">For more info</a></p>

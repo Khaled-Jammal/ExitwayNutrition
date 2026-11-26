@@ -1,21 +1,15 @@
-import { useState } from 'react'
 import { Icon } from './Home'
 import { matchesProductCategory } from '../data/productSearch'
 import { whatsappLink } from '../data/whatsapp'
-import ProductForm from './ProductForm'
 
-export default function CategoryPage({ title, eyebrow, category, products, search, recommended, isAdmin, onProductCreated }) {
-  const [addingProduct, setAddingProduct] = useState(false)
+export default function CategoryPage({ title, eyebrow, category, products, search, recommended }) {
   const filtered = products.filter((product) => matchesProductCategory(product, category))
-  const productCategory = category
   return (
     <section className="shop-section">
       <div className="section-heading">
         <div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2></div>
-        {isAdmin && <button className="admin-add-button" onClick={() => setAddingProduct(!addingProduct)}>{addingProduct ? 'Close form' : '+ Add product'}</button>}
       </div>
       {search && recommended && <p className="search-note">No exact match for “{search}” — here are a few products you might like.</p>}
-      {addingProduct && <ProductForm category={productCategory} onSaved={(product) => { onProductCreated(product); setAddingProduct(false) }} onCancel={() => setAddingProduct(false)} />}
       {filtered.length === 0 && <p className="empty-product-state">{search ? 'No products found. Try a different search.' : 'No products available in this section yet.'}</p>}
       <div className="product-grid page-product-grid">
         {filtered.map((product) => (
