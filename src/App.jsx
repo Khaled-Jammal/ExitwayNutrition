@@ -286,7 +286,7 @@ function App() {
         {supabaseStatus === 'checking' && <p className="connection-status" role="status">Checking Supabase connection...</p>}
         {supabaseStatus === 'error' && <p className="connection-status error" role="alert">Supabase data is unavailable: {dataError}</p>}
         {supabaseStatus === 'connected' && !supabaseWritesEnabled && user?.role === 'admin' && (
-          <p className="connection-status warning" role="status">Supabase is connected in read-only mode. Configure the server-side secret key to enable admin edits and image uploads.</p>
+          <p className="connection-status warning" role="status">The store is available, but admin edits and image uploads are disabled. Add SUPABASE_SECRET_KEY in Vercel project settings under Environment Variables, then redeploy. Keep this key server-only; do not use a VITE_ variable.</p>
         )}
         {activePage}
       </main>
