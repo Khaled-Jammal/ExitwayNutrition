@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { readApiResponse } from '../data/readApiResponse'
 
-export default function AccountPage({ user, adminConfigured, onAuth, onLogout, onNavigate }) {
+export default function AccountPage({ user, adminConfigured, localAdminBypass, onAuth, onLogout, onNavigate }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -44,7 +44,7 @@ export default function AccountPage({ user, adminConfigured, onAuth, onLogout, o
           <p className="account-email">{user.email}</p>
           {user.role === 'admin' && <button className="primary-button" onClick={() => onNavigate('admin')}>Open admin dashboard</button>}
           {error && <p className="form-error" role="alert">{error}</p>}
-          <button className="text-button" onClick={signOut}>Sign out</button>
+          {!localAdminBypass && <button className="text-button" onClick={signOut}>Sign out</button>}
         </div>
       </section>
     )
@@ -56,7 +56,7 @@ export default function AccountPage({ user, adminConfigured, onAuth, onLogout, o
         <p className="eyebrow">ExitWay administrator</p>
         <h1>Admin sign in</h1>
         <p className="account-description">Sign in with the administrator username and password to manage the store.</p>
-        {!adminConfigured && <p className="form-note">Admin sign-in is disabled until SESSION_SECRET, ADMIN_EMAIL, and ADMIN_PASSWORD are configured on the server. In development, start the API with <code>npm run dev:server</code>.</p>}
+        {!adminConfigured && <p className="form-note">Admin sign-in is disabled until SESSION_SECRET, ADMIN_EMAIL, and ADMIN_PASSWORD are configured on the server. In development, start the site with <code>npm run dev</code>.</p>}
         <label>Admin username or email<input type="text" autoComplete="username" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} /></label>
         <label>Password<input type="password" autoComplete="current-password" required maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} /></label>
         {error && <p className="form-error" role="alert">{error}</p>}

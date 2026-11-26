@@ -29,6 +29,10 @@ const sessionSecret = process.env.SESSION_SECRET || randomBytes(32).toString('he
 const adminIdentifier = (process.env.ADMIN_EMAIL || '').trim().toLowerCase()
 const adminPassword = process.env.ADMIN_PASSWORD || ''
 const adminAuthConfigured = Boolean(sessionSecretConfigured && adminIdentifier && adminPassword)
+const localAdminBypassEnabled = process.env.LOCAL_ADMIN_BYPASS === 'true'
+  && process.env.NODE_ENV !== 'production'
+  && !process.env.VERCEL
+const localDevelopmentAdmin = { id: 'exitway-local-admin', email: 'local-development@localhost', role: 'admin' }
 const sessionCookie = 'exitway_session'
 const sessionLifetime = 7 * 24 * 60 * 60
 const maxPhotoBytes = 500000
@@ -179,13 +183,22 @@ function readSession(req) {
   }
 }
 
+function isLoopbackRequest(req) {
+  return ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)
+}
+
+function getRequestUser(req) {
+  if (localAdminBypassEnabled && isLoopbackRequest(req)) return localDevelopmentAdmin
+  return readSession(req)
+}
+
 function setSessionCookie(res, user) {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
   res.setHeader('Set-Cookie', `${sessionCookie}=${encodeURIComponent(signSession(user))}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${sessionLifetime}${secure}`)
 }
 
 function requireAdmin(req, res, next) {
-  const user = readSession(req)
+  const user = getRequestUser(req)
   if (!user || user.role !== 'admin') return res.status(403).json({ error: 'Admin access required.' })
   req.authUser = user
   next()
@@ -304,10 +317,12 @@ app.put('/api/admin/site-settings/collection-images/:key', requireAdmin, require
 })
 
 app.get('/api/auth/me', (req, res) => {
-  const user = readSession(req)
+  const localAccess = localAdminBypassEnabled && isLoopbackRequest(req)
+  const user = getRequestUser(req)
   res.json({
     user,
-    adminConfigured: adminAuthConfigured,
+    adminConfigured: adminAuthConfigured || localAccess,
+    localAdminBypass: localAccess,
     supabaseWritesEnabled,
   })
 })
@@ -517,7 +532,12 @@ async function verifySupabaseConnection() {
 
 if (!process.env.VERCEL) {
   await verifySupabaseConnection()
-  app.listen(port, () => console.log(`ExitWay API running at http://localhost:${port} (Supabase connected${supabaseWritesEnabled ? '' : ', read-only'})`))
+  const onListening = () => console.log(`ExitWay API running at http://localhost:${port} (Supabase connected${supabaseWritesEnabled ? '' : ', read-only'}${localAdminBypassEnabled ? ', local admin access enabled' : ''})`)
+  if (localAdminBypassEnabled) {
+    app.listen(port, '127.0.0.1', onListening)
+  } else {
+    app.listen(port, onListening)
+  }
 }
 
 export default app

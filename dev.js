@@ -4,11 +4,11 @@ import { fileURLToPath } from 'node:url'
 
 const projectDirectory = path.dirname(fileURLToPath(import.meta.url))
 const processes = [
-  { name: 'API', args: ['--watch', 'server.js'] },
-  { name: 'Vite', args: [path.join(projectDirectory, 'node_modules', 'vite', 'bin', 'vite.js'), '--host', '127.0.0.1'] },
-].map(({ name, args }) => ({
+  { name: 'API', args: ['--watch', 'server.js'], env: { ...process.env, LOCAL_ADMIN_BYPASS: 'true' } },
+  { name: 'Vite', args: [path.join(projectDirectory, 'node_modules', 'vite', 'bin', 'vite.js'), '--host', '127.0.0.1'], env: process.env },
+].map(({ name, args, env }) => ({
   name,
-  child: spawn(process.execPath, args, { cwd: projectDirectory, env: process.env, stdio: 'inherit' }),
+  child: spawn(process.execPath, args, { cwd: projectDirectory, env, stdio: 'inherit' }),
 }))
 
 let stopping = false

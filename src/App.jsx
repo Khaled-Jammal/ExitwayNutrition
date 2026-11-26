@@ -33,6 +33,7 @@ function App() {
   const [user, setUser] = useState(null)
   const [authReady, setAuthReady] = useState(false)
   const [adminConfigured, setAdminConfigured] = useState(false)
+  const [localAdminBypass, setLocalAdminBypass] = useState(false)
   const [search, setSearch] = useState('')
   const [searchFocused, setSearchFocused] = useState(false)
   const [pendingSearchProductId, setPendingSearchProductId] = useState(null)
@@ -112,6 +113,7 @@ function App() {
         if (cancelled) return
         setUser(result.user)
         setAdminConfigured(Boolean(result.adminConfigured))
+        setLocalAdminBypass(Boolean(result.localAdminBypass))
         setSupabaseWritesEnabled(Boolean(result.supabaseWritesEnabled))
       })
       .catch((error) => {
@@ -177,7 +179,7 @@ function App() {
   else if (page === 'vitamins') activePage = <Vitamins {...pageProps}/>
   else if (page === 'supplement') activePage = <Supplement {...pageProps}/>
   else if (page === 'other-products') activePage = <OtherProducts {...pageProps}/>
-  else if (page === 'account') activePage = <AccountPage user={user} adminConfigured={adminConfigured} onAuth={handleAuth} onLogout={handleLogout} onNavigate={navigate}/>
+  else if (page === 'account') activePage = <AccountPage user={user} adminConfigured={adminConfigured} localAdminBypass={localAdminBypass} onAuth={handleAuth} onLogout={handleLogout} onNavigate={navigate}/>
   else if (page === 'admin') {
     activePage = !authReady
       ? <section className="account-page"><p>Checking admin access...</p></section>
@@ -185,6 +187,7 @@ function App() {
         ? <AdminDashboard
             products={products}
             collectionImages={collectionImages}
+            localAdminBypass={localAdminBypass}
             supabaseWritesEnabled={supabaseWritesEnabled}
             onCollectionImageUpdated={(key, image) => setCollectionImages((current) => ({ ...current, [key]: image }))}
             onProductCreated={pageProps.onProductCreated}
@@ -192,7 +195,7 @@ function App() {
             onProductDeleted={(id) => setProducts((current) => current.filter((product) => String(product.id) !== String(id)))}
             onLogout={handleLogout}
           />
-        : <AccountPage user={user} adminConfigured={adminConfigured} onAuth={handleAuth} onLogout={handleLogout} onNavigate={navigate}/>
+        : <AccountPage user={user} adminConfigured={adminConfigured} localAdminBypass={localAdminBypass} onAuth={handleAuth} onLogout={handleLogout} onNavigate={navigate}/>
   }
   else activePage = <Home products={products} isAdmin={user?.role === 'admin'} onProductCreated={pageProps.onProductCreated} collectionImages={collectionImages}/>
 

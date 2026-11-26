@@ -22,7 +22,7 @@ function ProductActionIcon({ type }) {
     : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg>
 }
 
-export default function AdminDashboard({ products, collectionImages, supabaseWritesEnabled, onCollectionImageUpdated, onProductCreated, onProductUpdated, onProductDeleted, onLogout }) {
+export default function AdminDashboard({ products, collectionImages, localAdminBypass, supabaseWritesEnabled, onCollectionImageUpdated, onProductCreated, onProductUpdated, onProductDeleted, onLogout }) {
   const [activeForm, setActiveForm] = useState(null)
   const [logoutError, setLogoutError] = useState('')
   const [productError, setProductError] = useState('')
@@ -65,8 +65,9 @@ export default function AdminDashboard({ products, collectionImages, supabaseWri
     <section className="admin-dashboard">
       <div className="admin-heading">
         <div><p className="eyebrow">ExitWay store</p><h1>Admin dashboard</h1></div>
-        <button className="text-button" onClick={signOut}>Sign out</button>
+        {!localAdminBypass && <button className="text-button" onClick={signOut}>Sign out</button>}
       </div>
+      {localAdminBypass && <p className="form-note" role="status">Local development access is enabled on this computer only. It is not available in production.</p>}
       {logoutError && <p className="form-error" role="alert">{logoutError}</p>}
       {productError && <p className="form-error" role="alert">{productError}</p>}
       {!supabaseWritesEnabled && <p className="form-error" role="alert">Supabase is read-only. Add the server-side SUPABASE_SECRET_KEY to enable product and image changes.</p>}
